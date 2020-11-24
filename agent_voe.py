@@ -3,17 +3,27 @@ import cv2
 import glob
 import math
 import numpy as np
-import multi_color_hist as mch
 import matplotlib.pyplot as plt
 from pathfinding.core.grid import Grid
 from pathfinding.finder.a_star import AStarFinder
 from pathfinding.core.diagonal_movement import DiagonalMovement
 from agent_util import *
+from gym_ai2thor.envs.mcs_env import McsEnv
+from meta_controller.meta_controller import MetaController
+import sys
+from frame_collector import Frame_collector
+
 
 if __name__ == "__main__":
+    collector = Frame_collector(scene_dir="intphy_task_img", start_scene_number=0)
+    env = McsEnv(
+        task="eval3_dataset", scene_type="agent_obj_preference", seed=50,
+        start_scene_number=0, frame_collector=collector, set_trophy=False
+    )
+
     # Assumes that these videos are of equal length/frames!
-    mask_cap = cv2.VideoCapture('test_single/50_mask.mkv')
-    color_cap = cv2.VideoCapture('test_single/50_color.mkv')
+    # mask_cap = cv2.VideoCapture('test_single/50_mask.mkv')
+    # color_cap = cv2.VideoCapture('test_single/50_color.mkv')
 
     M_wall, M_gnd = get_homographies()
 
@@ -203,11 +213,14 @@ if __name__ == "__main__":
         if type(obj_2_dict["c"]) == type(None) or (type(obj_2_dict["c"]) != type(None) and info["trial_num"] != 0): 
             end_offset = 4
             if i >= len(best_path) - end_offset:
-                #print(len(best_path))
-                tot_off = -1 - end_offset
-                if abs(tot_off) >= len(best_path):
-                    tot_off = -1
-                guess_x, guess_y = best_path[tot_off]
+                if (len(best_path)) == 0:
+                    guess_x, guess_y = (0,0)
+                    print("PATHING ISSUE :(")
+                else:    
+                    tot_off = -1 - end_offset
+                    if abs(tot_off) >= len(best_path):
+                        tot_off = -1
+                    guess_x, guess_y = best_path[tot_off]
             else:
                 guess_x, guess_y = best_path[i]
             euclid_err = ((guess_x - _a_x)**2 + (guess_y - _a_y)**2) ** 0.5
@@ -237,10 +250,19 @@ if __name__ == "__main__":
     num_trials = 9
     trial_info = None
     for idx in range(num_trials):
+        env.reset(random_init=False)
         path_taken = []
 
-        _ret, cam_im = color_cap.read()
-        _ret, mask_im = mask_cap.read()
+        # _ret, cam_im = color_cap.read()
+        # _ret, mask_im = mask_cap.read()
+
+        first_action = env.scene_config['goal']['action_list'][0][0]
+        env.step(action=first_action)
+        cam_im = env.step_output.image_list[0]
+        cam_im = np.array(cam_im)[:,:,::-1]
+        mask_im = env.step_output.object_mask_list[0]
+        mask_im = np.array(mask_im)[:,:,::-1]
+
         init_info_dict = {
             "trial_num": idx,
             "trial_err": 0,
@@ -258,15 +280,31 @@ if __name__ == "__main__":
             init_info_dict["agent_ch_avgs"] = trial_info["agent_ch_avgs"]
             init_info_dict["arena"] = trial_info["arena"]
             init_info_dict["wall_i_s"] = trial_info["wall_i_s"]
+
+        # trial's first step
         trial_info = step(cam_im, mask_im, init_info_dict, True)  
 
-        _ret, cam_im = color_cap.read()
-        _ret, mask_im = mask_cap.read()
-        while color_cap.isOpened() and type(cam_im) != type(None) and not is_blank_frame(cam_im):
+        next_action = env.scene_config['goal']['action_list'][1][0]
+        env.step(action=next_action)
+        cam_im = env.step_output.image_list[0]
+        cam_im = np.array(cam_im)[:,:,::-1]
+        mask_im = env.step_output.object_mask_list[0]
+        mask_im = np.array(mask_im)[:,:,::-1]
+        # _ret, cam_im = color_cap.read()
+        # _ret, mask_im = mask_cap.read()
+        action_i = 2
+        while type(cam_im) != type(None) and next_action == "Pass":
             trial_info["trial_num"] = idx
             trial_info = step(cam_im, mask_im, trial_info, False)
-            _ret, cam_im = color_cap.read()
-            _ret, mask_im = mask_cap.read()
+            # _ret, cam_im = color_cap.read()
+            # _ret, mask_im = mask_cap.read()
+            next_action = env.scene_config['goal']['action_list'][action_i][0]
+            env.step(action=next_action)
+            cam_im = env.step_output.image_list[0]
+            cam_im = np.array(cam_im)[:,:,::-1]
+            mask_im = env.step_output.object_mask_list[0]
+            mask_im = np.array(mask_im)[:,:,::-1]
+            action_i += 1
 
         # end of multi-object trial #1
         if trial_info["trial_num"] == 0 and type(trial_info["obj_2_dict"]["c"]) != type(None):
@@ -287,10 +325,14 @@ if __name__ == "__main__":
             trial_err = 0
             for i in range(trial_info["step_num"]):
                 if i >= len(trial_info["path"]) - end_offset:
-                    tot_off = -1 - end_offset
-                    if abs(tot_off) >= len(trial_info["path"]):
-                        tot_off = -1
-                    guess_x, guess_y = trial_info["path"][tot_off]
+                    if (len(trial_info["path"])) == 0:
+                        guess_x, guess_y = (0,0)
+                        print("PATHING ISSUE :(")
+                    else: 
+                        tot_off = -1 - end_offset
+                        if abs(tot_off) >= len(trial_info["path"]):
+                            tot_off = -1
+                        guess_x, guess_y = trial_info["path"][tot_off]
                 else:
                     guess_x, guess_y = trial_info["path"][i]
                 a_x, a_y = path_taken[i]
@@ -300,6 +342,11 @@ if __name__ == "__main__":
 
         #print("path:", trial_info["path"])
         path_len = len(trial_info["path"])
+        # @TODO remove hack for a common problem where the path isn't possible.
+        # e.g. sometimes we detect one of the objects inside a wall and no path is possible.
+        if path_len == 0:
+            print("PATHING ISSUE :(")
+            path_len = 1
         actual_len = len(path_taken)
         #print("actual path lenght:", actual_len)
         grid = Grid(matrix=trial_info["arena"])
