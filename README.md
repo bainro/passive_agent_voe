@@ -1,6 +1,7 @@
 How to use:
 
 ```
+pip install -r requirements.txt
 cp agent_voe.py <path/to/mcs_eval3>
 cp agent_util.py <path/to/mcs_eval3>
 python agent_voe.py
